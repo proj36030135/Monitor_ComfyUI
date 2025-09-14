@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GPU Monitor Viewer</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <!-- Chart.js v4 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+    <!-- date-fns adapter for time scales -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+  </head>
+  <body>
+    <header class="container">
+      <h1>GPU Monitor Viewer</h1>
+      <p class="muted">Carregue um arquivo CSV gerado pelo coletor.</p>
+    </header>
+
+    <main class="container">
+      <section class="card">
+        <div class="row">
+          <div class="col">
+            <label class="label" for="fileInput">Arquivo CSV</label>
+            <input id="fileInput" type="file" accept=".csv,text/csv" />
+          </div>
+          <div class="col actions">
+            <button id="selectAllBtn" class="btn">Selecionar tudo</button>
+            <button id="clearAllBtn" class="btn btn-ghost">Limpar</button>
+          </div>
+        </div>
+        <div class="row gap">
+          <div class="col">
+            <label class="label" for="sampleInput">Amostras (decimação LTTB)</label>
+            <input id="sampleInput" type="number" min="200" max="20000" step="100" value="1000" />
+          </div>
+          <div class="col">
+            <label class="label">Zoom/Pan</label>
+            <label class="checkbox">
+              <input id="zoomToggle" type="checkbox" />
+              <span>Habilitar zoom e pan</span>
+            </label>
+          </div>
+          <div class="col actions">
+            <button id="applyPerfBtn" class="btn">Aplicar</button>
+            <button id="resetZoomBtn" class="btn btn-ghost">Resetar zoom</button>
+          </div>
+        </div>
+        <div id="status" class="status">Nenhum arquivo carregado.</div>
+
+        <div id="columnsPane" class="columns-pane"></div>
+      </section>
+
+      <section class="card">
+        <canvas id="chart" height="120"></canvas>
+      </section>
+    </main>
+
+    <footer class="container footer">
+      <span class="muted">Chart.js timeseries + decimação (LTTB) — uso local, sem servidor.</span>
+    </footer>
+
+    <!-- chartjs-plugin-zoom (opcional) -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.umd.min.js"></script>
+
+    <script>
+      const fileInput = document.getElementById('fileInput');
+      const columnsPane = document.getElementById('columnsPane');
+      const statusEl = document.getElementById('status');
+      const selectAllBtn = document.getElementById('selectAllBtn');
+      const clearAllBtn = document.getElementById('clearAllBtn');
+      const sampleInput = document.getElementById('sampleInput');
+      const applyPerfBtn = document.getElementById('applyPerfBtn');
+      const zoomToggle = document.getElementById('zoomToggle');
+      const resetZoomBtn = document.getElementById('resetZoomBtn');
+
+      /**
+       * Paleta de cores fixa e legível
+       */
+      const COLOR_PALETTE = [
+        '#e6194b', '#3cb44b', '#ffe119', '#0082c8', '#f58231', '#911eb4', '#46f0f0', '#f032e6',
+        '#d2f53c', '#fabebe', '#008080', '#e6beff', '#aa6e28', '#fffac8', '#800000', '#aaffc3',
+        '#808000', '#ffd8b1', '#000080', '#808080', '#FFFFFF', '#000000'
+      ];
+
+      let chart;
+      let parsedData = { rows: [], columns: [], timestampKey: 'timestamp' };
+
+      function setStatus(msg, kind = 'info') {
+        statusEl.textContent = msg;
+        statusEl.className = 'status ' + kind;
+      }
+
+      function parseCSV(text) {
+        // Simples parse por linha e split em vírgula (CSV do coletor não possui aspas/escapes)
+        const lines = text.split(/\r?\n/).filter(Boolean);
+        if (lines.length < 2) return { rows: [], columns: [], timestampKey: 'timestamp' };
+        const header = lines[0].split(',').map(s => s.trim());
+        const rows = [];
+        for (let i = 1; i < lines.length; i++) {
+          const parts = lines[i].split(',').map(s => s.trim());
+          if (parts.length !== header.length) continue;
+          const row = {};
+          for (let j = 0; j < header.length; j++) {
+            row[header[j]] = parts[j];
+          }
+          rows.push(row);
+        }
+        return { rows, columns: header, timestampKey: 'timestamp' };
+      }
+
+      function isNumericValue(value) {
+        if (value === null || value === undefined) return false;
+        if (value === '' || value.toUpperCase() === 'N/A') return false;
+        return !isNaN(Number(value));
+      }
+
+      function detectNumericColumns(rows, columns, timestampKey) {
+        const candidates = columns.filter(c => c !== timestampKey);
+        const numeric = [];
+        for (const col of candidates) {
+          let ok = false;
+          for (let i = 0; i < rows.length; i++) {
+            const v = rows[i][col];
+            if (isNumericValue(v)) { ok = true; break; }
+          }
+          if (ok) numeric.push(col);
+        }
+        return numeric;
+      }
+
+      function buildCheckboxes(numericColumns) {
+        columnsPane.innerHTML = '';
+        if (numericColumns.length === 0) {
+          columnsPane.innerHTML = '<div class="muted">Nenhuma coluna numérica encontrada.</div>';
+          return;
+        }
+        const frag = document.createDocumentFragment();
+        numericColumns.forEach((col, idx) => {
+          const id = 'col_' + idx;
+          const wrapper = document.createElement('label');
+          wrapper.className = 'checkbox';
+          const input = document.createElement('input');
+          input.type = 'checkbox';
+          input.id = id;
+          input.value = col;
+          // Seleciona por padrão algumas colunas comuns
+          input.checked = ['gpu_util','mem_used_mb','temp_c','power_w','memory_util'].includes(col);
+          input.addEventListener('change', updateChartDatasets);
+          const span = document.createElement('span');
+          span.textContent = col;
+          wrapper.appendChild(input);
+          wrapper.appendChild(span);
+          frag.appendChild(wrapper);
+        });
+        columnsPane.appendChild(frag);
+      }
+
+      function getSelectedColumns() {
+        return Array.from(columnsPane.querySelectorAll('input[type="checkbox"]:checked')).map(i => i.value);
+      }
+
+      function buildDatasets(rows, selectedColumns, timestampKey) {
+        const datasets = [];
+        const colors = COLOR_PALETTE;
+        selectedColumns.forEach((col, idx) => {
+          const data = [];
+          for (let i = 0; i < rows.length; i++) {
+            const ts = rows[i][timestampKey];
+            const y = rows[i][col];
+            if (!isNumericValue(y)) continue;
+            const xVal = new Date(ts).getTime(); // epoch ms
+            if (Number.isFinite(xVal)) {
+              data.push({ x: xVal, y: Number(y) });
+            }
+          }
+          const c = colors[idx % colors.length];
+          datasets.push({
+            label: col,
+            data,
+            borderColor: c,
+            backgroundColor: c,
+            pointRadius: 0,
+            borderWidth: 1.5,
+            tension: 0,
+          });
+        });
+        return datasets;
+      }
+
+      function initChart() {
+        const ctx = document.getElementById('chart').getContext('2d');
+        if (chart) chart.destroy();
+        chart = new Chart(ctx, {
+          type: 'line',
+          data: { datasets: [] },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: { mode: 'nearest', intersect: false },
+            plugins: {
+              legend: { position: 'top' },
+              title: { display: false },
+              decimation: { enabled: true, algorithm: 'lttb', samples: Number(sampleInput.value || 1000) },
+              zoom: {
+                zoom: {
+                  wheel: { enabled: zoomToggle.checked },
+                  pinch: { enabled: zoomToggle.checked },
+                  mode: 'x'
+                },
+                pan: {
+                  enabled: zoomToggle.checked,
+                  mode: 'x'
+                }
+              }
+            },
+            scales: {
+              x: {
+                type: 'timeseries',
+                ticks: { source: 'auto' },
+                time: { unit: 'minute' },
+                adapters: {},
+              },
+              y: {
+                type: 'linear',
+                beginAtZero: true,
+                ticks: { precision: 0 },
+              }
+            }
+          }
+        });
+      }
+
+      function updateChartDatasets() {
+        if (!chart || !parsedData.rows.length) return;
+        const selected = getSelectedColumns();
+        const ds = buildDatasets(parsedData.rows, selected, parsedData.timestampKey);
+        chart.data.datasets = ds;
+        chart.update();
+      }
+
+      function handleFile(file) {
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            setStatus('Carregando CSV…', 'info');
+            const text = String(reader.result || '');
+            parsedData = parseCSV(text);
+            if (!parsedData.rows.length) {
+              setStatus('CSV vazio ou inválido.', 'warn');
+              initChart();
+              buildCheckboxes([]);
+              return;
+            }
+            const numericCols = detectNumericColumns(parsedData.rows, parsedData.columns, parsedData.timestampKey);
+            setStatus(`Linhas: ${parsedData.rows.length} | Colunas: ${parsedData.columns.length} | Numéricas: ${numericCols.length}`, 'ok');
+            initChart();
+            buildCheckboxes(numericCols);
+            updateChartDatasets();
+          } catch (e) {
+            console.error(e);
+            setStatus('Falha ao ler/parsing o CSV.', 'error');
+          }
+        };
+        reader.onerror = () => setStatus('Erro ao ler arquivo.', 'error');
+        reader.readAsText(file);
+      }
+
+      fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+      selectAllBtn.addEventListener('click', () => {
+        columnsPane.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
+        updateChartDatasets();
+      });
+      clearAllBtn.addEventListener('click', () => {
+        columnsPane.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
+        updateChartDatasets();
+      });
+
+      applyPerfBtn.addEventListener('click', () => {
+        if (!chart) return;
+        chart.options.plugins.decimation.samples = Number(sampleInput.value || 1000);
+        chart.options.plugins.zoom.zoom.wheel.enabled = zoomToggle.checked;
+        chart.options.plugins.zoom.zoom.pinch.enabled = zoomToggle.checked;
+        chart.options.plugins.zoom.pan.enabled = zoomToggle.checked;
+        chart.update();
+      });
+
+      resetZoomBtn.addEventListener('click', () => {
+        if (chart && chart.resetZoom) {
+          chart.resetZoom();
+        }
+      });
+
+      // Boot
+      initChart();
+    </script>
+  </body>
+  </html>
+
+
