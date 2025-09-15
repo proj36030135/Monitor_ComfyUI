@@ -58,3 +58,5 @@ Thumbs.db
 # Específico do projeto
 .cursor/
 
+# Logs
+./logs/
