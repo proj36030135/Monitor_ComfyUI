@@ -8,6 +8,7 @@ from pathlib import Path
 from tkinter import Tk, StringVar, IntVar, BooleanVar, filedialog, messagebox
 from tkinter import ttk
 from .logging_utils import setup_logging
+from .live_chart import LiveChartWindow
 
 
 DEFAULT_INTERVALO = 2
@@ -163,6 +164,7 @@ class App(Tk):
         self.overwrite_var = BooleanVar(value=False)
 
         self.collector = NvidiaSmiCollector()
+        self._chart_window: LiveChartWindow | None = None
 
         self._build_ui()
 
@@ -198,6 +200,8 @@ class App(Tk):
         ttk.Button(frm, text="Iniciar", command=self._on_start).grid(row=4, column=0, **pad)
         ttk.Button(frm, text="Parar", command=self._on_stop).grid(row=4, column=1, **pad)
         ttk.Button(frm, text="Abrir Pasta", command=self._open_folder).grid(row=4, column=2, **pad)
+        ttk.Button(frm, text="Abrir Grafico", command=self._open_chart).grid(row=4, column=3, **pad)
+        ttk.Button(frm, text="Ver Execucao...", command=self._open_past_execution).grid(row=4, column=4, **pad)
 
         # Status
         self.status_var = StringVar(value="Pronto")
@@ -222,8 +226,10 @@ class App(Tk):
             duracao = max(0, int(self.duracao_var.get()))
             gpu_idx = self.gpu_index_var.get().strip()
             colunas = self.colunas_var.get().strip()
-            csv_path = self.csv_path_var.get().strip()
-            overwrite = bool(self.overwrite_var.get())
+            base_path = self.csv_path_var.get().strip() or DEFAULT_CSV_PATH
+            csv_path = self._make_session_csv_path(base_path, intervalo_ms=intervalo * 1000)
+            self.csv_path_var.set(csv_path)
+            overwrite = True
 
             self.collector.start(
                 intervalo_seg=intervalo,
@@ -235,6 +241,8 @@ class App(Tk):
             )
             self.status_var.set("Coleta em execução…")
             logging.info("Coleta iniciada: intervalo=%s duracao=%s gpu_index=%s csv_path=%s overwrite=%s", intervalo, duracao, gpu_idx, csv_path, overwrite)
+            self.status_var.set(f"Coleta em execucao. CSV: {os.path.basename(csv_path)}")
+            self._open_chart()
         except Exception as e:
             messagebox.showerror("Erro ao iniciar", str(e))
             logging.exception("Erro ao iniciar coleta")
@@ -247,6 +255,48 @@ class App(Tk):
         except Exception as e:
             messagebox.showerror("Erro ao parar", str(e))
             logging.exception("Erro ao parar coleta")
+
+    def _open_chart(self) -> None:
+        try:
+            csv_path = self.csv_path_var.get().strip() or DEFAULT_CSV_PATH
+            if self._chart_window and self._chart_window.winfo_exists():
+                self._chart_window.load_csv(csv_path)
+                self._chart_window.deiconify()
+                self._chart_window.lift()
+                self._chart_window.focus_force()
+                return
+            self._chart_window = LiveChartWindow(self, csv_path=csv_path, interval_ms=500, max_points=5000)
+        except Exception as e:
+            messagebox.showerror("Erro ao abrir grafico", str(e))
+            logging.exception("Falha ao abrir janela de graficos")
+
+    def _open_past_execution(self) -> None:
+        try:
+            path = filedialog.askopenfilename(
+                title="Selecionar CSV de execucao passada",
+                filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+                initialdir=os.path.abspath(os.path.dirname(self.csv_path_var.get()) or "."),
+            )
+            if not path:
+                return
+            self.csv_path_var.set(path)
+            if self._chart_window and self._chart_window.winfo_exists():
+                self._chart_window.load_csv(path)
+                self._chart_window.deiconify()
+                self._chart_window.lift()
+                self._chart_window.focus_force()
+            else:
+                self._chart_window = LiveChartWindow(self, csv_path=path, interval_ms=500, max_points=5000)
+        except Exception as e:
+            messagebox.showerror("Erro ao abrir execucao passada", str(e))
+            logging.exception("Falha ao abrir execucao passada")
+
+    def _make_session_csv_path(self, base_path: str, intervalo_ms: int) -> str:
+        base_dir = os.path.dirname(base_path) or "."
+        os.makedirs(base_dir, exist_ok=True)
+        ts = time.strftime("%Y%m%d-%H%M%S")
+        fname = f"gpu_log_{ts}_i{intervalo_ms}.csv"
+        return os.path.join(base_dir, fname)
 
     def _open_folder(self) -> None:
         path = os.path.abspath(os.path.dirname(self.csv_path_var.get()) or ".")
@@ -267,5 +317,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
 
 
