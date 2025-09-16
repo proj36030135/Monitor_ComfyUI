@@ -1,242 +1,275 @@
-# Backend de Observabilidade ComfyUI - MVP
+# 🖥️ GPU Monitor
 
-[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://python.org)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-green.svg)](https://fastapi.tiangolo.com)
-[![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-2.0+-red.svg)](https://sqlalchemy.org)
+Sistema completo de monitoramento de GPU em tempo real com arquitetura separada frontend/backend.
 
-Backend local-first para observabilidade de runs/gerações feitas com pipelines do ComfyUI. O serviço coleta e persiste amostras de métricas (GPU/CPU/RAM/processo), marca eventos (início/fim de sessão e run), agrega séries temporais para visualização, exporta dados e aplica políticas de retenção.
+## 📋 Funcionalidades
 
-## Stack Tecnológica
+- **Backend API**: Coleta dados via nvidia-smi e fornece API REST + WebSocket
+- **Frontend Dashboard**: Interface web moderna com gráficos em tempo real
+- **Armazenamento**: Banco de dados SQLite para histórico completo
+- **Streaming**: WebSocket para dados em tempo real
+- **Responsivo**: Interface adaptável para desktop e mobile
 
-- **API**: FastAPI + Uvicorn
-- **ORM**: SQLAlchemy 2.0 
-- **Migrações**: Alembic
-- **Validação**: Pydantic v2
-- **Banco**: SQLite (WAL mode)
-- **Execução**: Local no PC do usuário (host loopback)
+## 🔧 Dados Coletados
 
-## Instalação e Configuração
+- `device_index`: Índice da GPU (0, 1, 2, ...)
+- `util_percent`: Percentual de utilização da GPU
+- `mem_used_mb`: Memória utilizada em MB
+- `mem_total_mb`: Memória total em MB
+- `temp_celsius`: Temperatura em Celsius
+- `power_watts`: Consumo de energia em Watts
 
-### 1. Requisitos
+## 🏗️ Arquitetura
 
-- Python 3.9+
-- pip ou pipenv
+```
+gpu-monitor/
+├── backend/                 # API e coleta de dados
+│   ├── server.py           # Servidor FastAPI
+│   ├── gpu_monitor.py      # Coleta e armazenamento
+│   ├── requirements.txt    # Dependências Python
+│   ├── test_client.py      # Cliente de teste
+│   └── run.py             # Script de execução
+├── viewer/                 # Frontend web
+│   ├── index.html         # Dashboard principal
+│   ├── styles.css         # Estilos
+│   ├── dashboard.js       # Lógica JavaScript
+│   └── README.md          # Documentação do viewer
+└── README.md              # Este arquivo
+```
 
-### 2. Instalação
+## 🚀 Instalação e Uso
+
+### Pré-requisitos
+
+- Python 3.8+
+- NVIDIA GPU com drivers instalados
+- nvidia-smi disponível no PATH
+- Navegador web moderno
+
+### 1. Backend - Instalar dependências
 
 ```bash
-# Clonar o repositório
-git clone <repository-url>
-cd monitor-comfyui
-
-# Criar ambiente virtual
-python -m venv .venv
-
-# Ativar ambiente virtual (Windows)
-.venv\\Scripts\\activate
-
-# Ativar ambiente virtual (Linux/Mac)
-source .venv/bin/activate
-
-# Instalar dependências
+cd backend
 pip install -r requirements.txt
 ```
 
-### 3. Configuração do Banco de Dados
+### 2. Backend - Executar servidor
 
 ```bash
-# Executar migrações iniciais
-alembic upgrade head
+cd backend
+python run.py
+# ou
+python server.py
 ```
 
-## Execução Local
+O backend estará disponível em: http://localhost:8000
 
-### Desenvolvimento
+### 3. Frontend - Abrir dashboard
+
+Abra o arquivo `viewer/index.html` diretamente no navegador ou use um servidor HTTP local:
 
 ```bash
-# Com reload automático
-uvicorn app.main:app --host 127.0.0.1 --port 8080 --reload
+# Opção 1: Abrir diretamente
+# Abra viewer/index.html no navegador
 
-# Ou usando variáveis de ambiente
-uvicorn app.main:app --host $APP_HOST --port $APP_PORT --reload
+# Opção 2: Servidor HTTP simples (Python)
+cd viewer
+python -m http.server 3000
+# Acesse: http://localhost:3000
+
+# Opção 3: Servidor HTTP simples (Node.js)
+cd viewer
+npx serve .
 ```
 
-### Produção
+### 4. Conectar frontend ao backend
 
+1. Abra o dashboard no navegador
+2. Verifique se a URL do backend está correta (http://localhost:8000)
+3. Clique em "Conectar"
+4. Os dados em tempo real aparecerão automaticamente
+
+## 📡 API do Backend
+
+### WebSocket
+- `ws://localhost:8000/ws` - Stream de dados em tempo real
+
+### REST Endpoints
+
+#### Informações da API
+```http
+GET /
+```
+
+#### Health Check
+```http
+GET /api/health
+```
+
+#### Dados atuais
+```http
+GET /api/gpu/current
+```
+
+#### Histórico
+```http
+GET /api/gpu/history?hours=24&device_index=0&limit=1000
+```
+
+Parâmetros:
+- `hours`: Horas de histórico (1-168)
+- `device_index`: GPU específica (opcional)
+- `limit`: Limite de registros (1-10000)
+
+#### Estatísticas
+```http
+GET /api/gpu/stats
+```
+
+## 🎨 Frontend Features
+
+### Dashboard Principal
+- **Cards de GPU**: Métricas em tempo real para cada GPU
+- **Gráficos**: Visualização de utilização, temperatura, memória e potência
+- **Status**: Indicadores de conexão e saúde do sistema
+
+### Controles
+- **Conexão**: Configurar URL do backend e conectar/desconectar
+- **Gráficos**: Pausar/retomar, limpar dados, ajustar período
+- **Histórico**: Consultar dados passados com filtros
+
+### Abas
+- **Histórico**: Tabela com dados históricos filtráveis
+- **Estatísticas**: Resumo estatístico das GPUs
+- **Logs**: Log de eventos do sistema com exportação
+
+## 🗃️ Banco de Dados
+
+```sql
+CREATE TABLE gpu_data (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    device_index INTEGER,
+    util_percent REAL,
+    mem_used_mb REAL,
+    mem_total_mb REAL,
+    temp_celsius REAL,
+    power_watts REAL
+);
+```
+
+## 📊 Exemplo de Resposta da API
+
+```json
+{
+  "data": [
+    {
+      "id": 1,
+      "timestamp": "2024-01-15T10:30:45",
+      "device_index": 0,
+      "util_percent": 85.5,
+      "mem_used_mb": 7234.0,
+      "mem_total_mb": 8192.0,
+      "temp_celsius": 72.0,
+      "power_watts": 220.5
+    }
+  ],
+  "count": 1
+}
+```
+
+## 🔧 Configuração
+
+### Backend - Porta do servidor
+Edite `backend/server.py`:
+```python
+uvicorn.run(
+    "server:app",
+    host="0.0.0.0",
+    port=8080,  # Nova porta
+    reload=True
+)
+```
+
+### Backend - Intervalo de coleta
+Edite `backend/server.py`, função `background_monitoring()`:
+```python
+await asyncio.sleep(5)  # Altere para o intervalo desejado (segundos)
+```
+
+### Frontend - URL do backend
+No dashboard, altere a URL na interface ou edite `viewer/dashboard.js`:
+```javascript
+this.backendUrl = 'http://localhost:8000';  // Nova URL
+```
+
+## 🐛 Solução de Problemas
+
+### Backend não inicia
 ```bash
-uvicorn app.main:app --host 127.0.0.1 --port 8080 --workers 1
+# Verifique se nvidia-smi funciona
+nvidia-smi --version
+
+# Verifique dependências
+cd backend
+pip install -r requirements.txt
 ```
 
-## Variáveis de Ambiente
+### Frontend não conecta
+1. Verifique se o backend está rodando: http://localhost:8000
+2. Verifique CORS no navegador (console F12)
+3. Teste a API diretamente: http://localhost:8000/api/health
 
-Crie um arquivo `.env` na raiz do projeto:
+### Dados não aparecem
+1. Verifique se há GPUs NVIDIA no sistema
+2. Teste o monitor diretamente: `python backend/gpu_monitor.py`
+3. Verifique logs no console do navegador
 
-```env
-# Configurações da aplicação
-APP_HOST=127.0.0.1
-APP_PORT=8080
+### WebSocket não conecta
+1. Verifique se a URL WebSocket está correta
+2. Teste com ferramenta externa (ex: wscat)
+3. Verifique firewall/proxy
 
-# Configurações do banco de dados  
-DB_URL=sqlite:///./app.db
-DB_ECHO=false
+## 📈 Desenvolvimento
 
-# CORS (desenvolvimento)
-CORS_ORIGINS=http://localhost,http://127.0.0.1
+### Executar em modo de desenvolvimento
 
-# Outros
-MAX_BODY_MB=5
-```
-
-### Descrição das Variáveis
-
-| Variável | Padrão | Descrição |
-|----------|---------|-----------|
-| `APP_HOST` | `127.0.0.1` | Host do servidor |
-| `APP_PORT` | `8080` | Porta do servidor |
-| `DB_URL` | `sqlite:///./app.db` | URL de conexão do banco |
-| `DB_ECHO` | `false` | Exibir queries SQL no log |
-| `CORS_ORIGINS` | `http://localhost,http://127.0.0.1` | Origins permitidas para CORS |
-| `MAX_BODY_MB` | `5` | Tamanho máximo do body da requisição |
-
-## Endpoints Disponíveis
-
-### Health Check
-
+Backend com auto-reload:
 ```bash
-# Verificar saúde do serviço
-curl http://127.0.0.1:8080/health
+cd backend
+python run.py --reload
 ```
 
-### Documentação
-
-- **Swagger UI**: http://127.0.0.1:8080/docs
-- **ReDoc**: http://127.0.0.1:8080/redoc
-- **OpenAPI Schema**: http://127.0.0.1:8080/openapi.json
-
-## Estrutura do Projeto
-
-```
-.
-├── app/
-│   ├── __init__.py
-│   ├── main.py              # Aplicação FastAPI principal
-│   ├── db.py                # Configuração do banco de dados
-│   ├── crud/                # Operações CRUD
-│   ├── services/            # Camada de serviços (retenção, agregações)
-│   └── routers/             # Roteadores da API
-├── alembic/                 # Migrações do banco
-├── alembic.ini              # Configuração do Alembic
-├── requirements.txt         # Dependências Python
-└── README.md               # Este arquivo
-```
-
-## Desenvolvimento
-
-### Formatação e Linting
-
+Frontend com servidor de desenvolvimento:
 ```bash
-# Formatação com Black
-black app/ alembic/
-
-# Linting com Ruff
-ruff check app/ alembic/
-
-# Correção automática com Ruff
-ruff check --fix app/ alembic/
+cd viewer
+python -m http.server 3000
 ```
 
-### Testes
-
+### Testar API
 ```bash
-# Executar testes
-pytest
-
-# Com coverage
-pytest --cov=app tests/
+cd backend
+python test_client.py
 ```
 
-### Migrações
+### Estrutura de desenvolvimento
+- Backend: FastAPI com auto-reload
+- Frontend: Vanilla JavaScript (sem build necessário)
+- Dados: SQLite (arquivo local)
+- Logs: Console + interface web
 
-```bash
-# Criar nova migração
-alembic revision --autogenerate -m "Descrição da migração"
+## 📝 Licença
 
-# Aplicar migrações
-alembic upgrade head
+Este projeto está sob licença MIT.
 
-# Reverter migração
-alembic downgrade -1
+## 🤝 Contribuição
 
-# Ver histórico
-alembic history
-```
+1. Fork o projeto
+2. Crie uma branch para sua feature
+3. Commit suas mudanças
+4. Push para a branch
+5. Abra um Pull Request
 
-## Arquitetura
+## 📞 Suporte
 
-### Componentes
-
-- **API HTTP (FastAPI)**: Roteadores para `sessions`, `runs`, `ingest`, `samples`, `export`, `profiles`, `preferences`, `health`
-- **Camada de Serviços**: Regras de retenção, agregações, downsample
-- **Persistência (SQLite)**: Esquema relacional otimizado para leituras por janela temporal
-
-### Padrões e Convenções
-
-- **Timestamps**: epoch **ms** (INTEGER)
-- **IDs**: `uuid4` (TEXT)
-- **Serialização**: JSON (UTF-8)
-- **CORS**: restrito a `http://localhost`/`127.0.0.1`
-
-## Configurações SQLite
-
-O banco está configurado com:
-- **WAL mode**: Para melhor concorrência (leitores não bloqueiam escritores)
-- **synchronous=NORMAL**: Performance balanceada
-- **foreign_keys=ON**: Integridade referencial
-- **temp_store=MEMORY**: Performance otimizada
-- **Cache otimizado**: ~40MB de cache para performance
-
-## Resolução de Problemas
-
-### Erro de conexão com banco
-
-```bash
-# Verificar se o arquivo do banco existe
-ls -la app.db
-
-# Recriar banco se necessário
-rm app.db
-alembic upgrade head
-```
-
-### Erro de importação
-
-```bash
-# Verificar se o ambiente virtual está ativo
-which python
-
-# Reinstalar dependências
-pip install -r requirements.txt --force-reinstall
-```
-
-### Problemas com CORS
-
-Verifique se as origins estão configuradas corretamente na variável `CORS_ORIGINS`.
-
-## Suporte
-
-Para dúvidas, problemas ou sugestões, consulte a documentação técnica detalhada no DSD ou abra uma issue no repositório.
-
-## Roadmap
-
-- [ ] Implementação dos endpoints de sessões
-- [ ] Sistema de ingestão de métricas
-- [ ] Agregações e downsample
-- [ ] Sistema de export
-- [ ] Políticas de retenção
-- [ ] Interface web (viewer)
-
----
-
-**Versão**: 0.1.0  
-**Status**: MVP em desenvolvimento  
-**Stack**: FastAPI + SQLAlchemy 2.0 + SQLite (WAL)
+Para suporte, abra uma issue no repositório.

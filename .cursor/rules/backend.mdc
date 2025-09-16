@@ -1,0 +1,126 @@
+---
+alwaysApply: false
+---
+showRules
+
+# .cursorrules — Backend Padrão (Hexa-Lite)
+
+## Visão
+
+Crie e evolua backends pessoais com **velocidade e organização mínima**, usando a arquitetura **Hexa-Lite**:
+
+```
+app/
+  api/      # porta HTTP (rotas/handlers)
+  domain/   # o que o app faz (modelos, contratos, casos de uso)
+  infra/    # como o app faz (SQLite, fila em memória, workers, export)
+  core/     # config (.env), logs, bootstrap (fiação)
+  main.py   # ponto de entrada (sobe app e workers)
+```
+
+## Princípios
+
+* **KISS**: comece enxuto; só adicione peças quando doer.
+* **Domain first**: regra de negócio e termos do problema moram em `domain/`.
+* **Separação leve**: API não conhece SQL/thread; Domain não conhece HTTP/SQLite; Infra não decide regra.
+* **Defaults do Rod**: SQLite **sem migrações**, **jobs em segundo plano**, **sem auth** por padrão.
+* **DX**: nomes claros, arquivos curtos, comentários concisos em PT-BR.
+
+## Antes de gerar muita coisa, pergunte (no máximo 3 perguntas)
+
+1. Recursos (ex.: `orders`, `sessions`)?
+2. Endpoints essenciais (CRUD + alguma ação)?
+3. Jobs necessários (ex.: `export_*`, `recalc_*`), e quais saídas (CSV/JSON)?
+
+## Regras de implementação (geral)
+
+* **Código em inglês** (arquivos, classes, funções). **Comentários/README em PT-BR**.
+* **Sync por padrão** (simplicidade). Só use async se realmente precisar.
+* **SQLite**: arquivo `DATABASE_PATH` do `.env`. Crie tabelas no bootstrap se não existirem.
+* **Jobs**: `queue.Queue` + 1–2 worker threads. Persistir `jobs` no SQLite (status/resultado).
+* **Sem migrações**: nada de Alembic por padrão; se ativar depois, trate como “pack” opcional.
+* **Sem auth**: endpoints abertos no uso pessoal; se precisar, auth vira pack opcional.
+
+## Convenções (sempre)
+
+* **API** (em `app/api/`): só traduz HTTP ↔ casos de uso. Sem SQL, sem regra.
+* **Domain** (em `app/domain/`):
+
+  * `models/` (entities simples; ex.: `Order`, `Job`, `Session`, `Run`, `Sample`).
+  * `contracts/` (o que o domínio pede “para fora”; ex.: `OrdersStore`, `JobsQueue`, `ExportWriter`).
+  * `usecases/` (verbos por **tema**; ex.: `orders.py`, `jobs.py`, `samples.py`).
+* **Infra** (em `app/infra/`):
+
+  * `sqlite/` (*stores* que implementam os `contracts` do domínio).
+  * `queue/` (fila em memória).
+  * `workers/` (consumidores de fila, coletor, manutenção).
+  * `export/` (CSV writers ou afins).
+* **Core** (em `app/core/`):
+
+  * `settings.py` (PORT, DATABASE\_PATH, JOB\_WORKERS, CORS\_ORIGINS, etc.).
+  * `logging.py` (formato simples).
+  * `bootstrap.py` (instancia *stores*, fila, workers; religa jobs `running→queued` no start).
+
+## Endpoints mínimos (se nada for especificado)
+
+* `GET /health` → `{status:"ok"}`
+* **Jobs**:
+
+  * `POST /jobs` → `{type,payload}` → `{job_id,status:"queued"}`
+  * `GET /jobs/{id}` → `{status, result?, error?}`
+* **Recurso exemplo** (se solicitado): `GET/POST /items`, `GET/PATCH/DELETE /items/{id}`
+
+## Contratos padrão (domain/contracts) — nomes e métodos (resumo)
+
+* `JobsStore`: `create(job)`, `get(id)`, `set_status(id, status, result?, error?)`, `requeue_running_on_boot()`
+* `JobsQueue`: `enqueue(job_id)`, `dequeue(timeout?)`
+* `SamplesStore`: `save_batch(samples)`, `query(session_id, filters)`, `count(session_id)`
+* `SessionsStore`: `create(...)`, `update(...)`, `get(id)`, `list(filters)`, `summary(id)`
+* `RunsStore`: `start(session_id, t0)`, `end(run_id, t1)`, `get(run_id)`, `list(session_id)`
+* `ExportWriter`: `session_to_csv(session_id, path)`, `run_to_csv(run_id, path)`
+* (No sistema de vendas, troque/adicione `OrdersStore`, `OrderItemsStore`, `ProductsStore`, `PaymentsStore`, `ParamsStore` etc.)
+
+## Regras para Jobs (background)
+
+* Persistir job em `JobsStore` com `status=queued` → enfileirar `job_id`.
+* Worker: retira `job_id`, executa handler por `type` (`export_*`, `recalc_*`, etc.), grava `done` ou `error` com `result`.
+* Reinício: no `bootstrap`, marcar `running` como `queued`.
+* Front consulta `GET /jobs/{id}` a cada \~3s (padrão).
+
+## Estilo e qualidade
+
+* Arquivos curtos (ideal: < 200 linhas). Funções pequenas.
+* Retornos sempre com envelope consistente (`data`, `error?`, `meta?`).
+* Logs informativos (ação, id, duração). Nunca logar segredos.
+* Testes mínimos: health, um use case chave, e um worker simples (quando aplicável).
+
+## Proibido (no modo básico)
+
+* Repositórios/Services anêmicos só para “seguir padrão”.
+* Regra de negócio dentro de `api/` ou `infra/`.
+* Introduzir Alembic/Redis/Rabbit/S3 sem solicitação explícita.
+* Criar muitos arquivos por caso de uso no início (prefira **por tema**).
+
+## Evolução (quando solicitado)
+
+* **Auth Pack**: API-Key simples (header), guard para admin.
+* **DB Pack**: Alembic + Postgres (migrar `Stores` e `DATABASE_URL`).
+* **Obs Pack**: request-id + timing middleware.
+* **Schedule Pack**: APScheduler para jobs de horário.
+
+## Checklist de PR (auto-revisão)
+
+* [ ] API chama **apenas** usecases do domínio.
+* [ ] Usecases usam **apenas** `contracts` do domínio.
+* [ ] Infra cumpre `contracts` sem decidir regra.
+* [ ] Tabelas criadas no bootstrap se não existirem (SQLite).
+* [ ] Jobs: status/resultado persistidos corretamente.
+* [ ] README curto explica como rodar e endpoints básicos.
+
+## Tom de interação (Cursor)
+
+* Seja **interativo**: antes de scaffolds grandes, confirme recursos/ações e outputs esperados.
+* Prefira **exemplos mínimos** e evolua iterando.
+* Se o usuário pedir complexidade (auth, migrações, filas externas), trate como **pack** e avise o impacto.
+
+endRules

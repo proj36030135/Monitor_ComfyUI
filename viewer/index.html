@@ -1,300 +1,246 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>GPU Monitor Viewer</title>
-    <link rel="stylesheet" href="./styles.css" />
-    <!-- Chart.js v4 -->
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPU Monitor Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <!-- Chart.js para gráficos -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-    <!-- date-fns adapter for time scales -->
+    <!-- date-fns adapter para escalas de tempo -->
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+    <!-- Plugin de zoom para Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.umd.min.js"></script>
   </head>
   <body>
-    <header class="container">
-      <h1>GPU Monitor Viewer</h1>
-      <p class="muted">Carregue um arquivo CSV gerado pelo coletor.</p>
-    </header>
-
-    <main class="container">
-      <section class="card">
-        <div class="row">
-          <div class="col">
-            <label class="label" for="fileInput">Arquivo CSV</label>
-            <input id="fileInput" type="file" accept=".csv,text/csv" />
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>🖥️ GPU Monitor Dashboard</h1>
+            <div class="status-bar">
+                <div class="status-item">
+                    <span class="status-label">Backend:</span>
+                    <span id="backend-status" class="status-value disconnected">Desconectado</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">WebSocket:</span>
+                    <span id="ws-status" class="status-value disconnected">Desconectado</span>
           </div>
-          <div class="col actions">
-            <button id="selectAllBtn" class="btn">Selecionar tudo</button>
-            <button id="clearAllBtn" class="btn btn-ghost">Limpar</button>
-          </div>
-        </div>
-        <div class="row gap">
-          <div class="col">
-            <label class="label" for="sampleInput">Amostras (decimação LTTB)</label>
-            <input id="sampleInput" type="number" min="200" max="20000" step="100" value="1000" />
-          </div>
-          <div class="col">
-            <label class="label">Zoom/Pan</label>
-            <label class="checkbox">
-              <input id="zoomToggle" type="checkbox" />
-              <span>Habilitar zoom e pan</span>
-            </label>
-          </div>
-          <div class="col actions">
-            <button id="applyPerfBtn" class="btn">Aplicar</button>
-            <button id="resetZoomBtn" class="btn btn-ghost">Resetar zoom</button>
+                <div class="status-item">
+                    <span class="status-label">GPUs:</span>
+                    <span id="gpu-count" class="status-value">-</span>
           </div>
         </div>
-        <div id="status" class="status">Nenhum arquivo carregado.</div>
+        </header>
 
-        <div id="columnsPane" class="columns-pane"></div>
+        <!-- Controles -->
+        <section class="card controls">
+            <div class="controls-row">
+                <div class="control-group">
+                    <label for="backend-url">URL do Backend:</label>
+                    <input type="text" id="backend-url" value="http://localhost:8000" placeholder="http://localhost:8000">
+          </div>
+                <div class="control-group">
+                    <label for="update-interval">Intervalo (s):</label>
+                    <input type="number" id="update-interval" value="2" min="1" max="60">
+          </div>
+                <div class="control-actions">
+                    <button id="connect-btn" class="btn btn-primary">Conectar</button>
+                    <button id="disconnect-btn" class="btn btn-secondary" disabled>Desconectar</button>
+                    <button id="clear-data-btn" class="btn btn-ghost">Limpar Dados</button>
+          </div>
+        </div>
+        </section>
+
+        <!-- Controles de Sessão -->
+        <section class="card session-controls">
+            <div class="session-header">
+                <h2>📹 Gravação de Sessão</h2>
+                <div class="session-status">
+                    <span class="status-label">Sessão Ativa:</span>
+                    <span id="current-session-name" class="status-value">Nenhuma</span>
+                </div>
+            </div>
+            
+            <div class="session-row">
+                <div class="session-form">
+                    <div class="form-group">
+                        <label for="session-name">Nome da Sessão:</label>
+                        <input type="text" id="session-name" placeholder="Ex: Treinamento ResNet50" maxlength="100">
+                    </div>
+                    <div class="form-group">
+                        <label for="session-description">Comentários:</label>
+                        <textarea id="session-description" placeholder="Descrição da sessão ou experimento..." rows="2" maxlength="500"></textarea>
+                    </div>
+                </div>
+                <div class="session-actions">
+                    <button id="create-session-btn" class="btn btn-primary" disabled>Criar Sessão</button>
+                    <button id="start-session-btn" class="btn btn-success" disabled>Iniciar Gravação</button>
+                    <button id="stop-session-btn" class="btn btn-danger" disabled>Parar Gravação</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Cards de GPU em tempo real -->
+        <section id="gpu-cards" class="gpu-grid">
+            <!-- Cards serão gerados dinamicamente -->
       </section>
 
-      <section class="card">
-        <canvas id="chart" height="120"></canvas>
-      </section>
-    </main>
+        <!-- Gráfico Dinâmico -->
+        <section class="card">
+            <div class="chart-header">
+                <h2>📊 Gráfico Dinâmico</h2>
+                <div class="chart-main-controls">
+                    <select id="chart-timespan">
+                        <option value="300">5 minutos</option>
+                        <option value="900">15 minutos</option>
+                        <option value="1800" selected>30 minutos</option>
+                        <option value="3600">1 hora</option>
+                    </select>
+                    <button id="pause-charts" class="btn btn-small">⏸️ Pausar</button>
+                </div>
+            </div>
+            
+            <div class="chart-config-panel">
+                <div class="chart-config-section">
+                    <h4>📈 Métricas</h4>
+                    <div class="metrics-selector">
+                        <label class="metric-checkbox">
+                            <input type="checkbox" id="metric-util" value="utilization" checked>
+                            <span class="metric-label">Utilização (%)</span>
+                            <div class="metric-color" style="background: #2f81f7;"></div>
+                        </label>
+                        <label class="metric-checkbox">
+                            <input type="checkbox" id="metric-temp" value="temperature">
+                            <span class="metric-label">Temperatura (°C)</span>
+                            <div class="metric-color" style="background: #f0ad4e;"></div>
+                        </label>
+                        <label class="metric-checkbox">
+                            <input type="checkbox" id="metric-memory" value="memory">
+                            <span class="metric-label">Memória (MB)</span>
+                            <div class="metric-color" style="background: #3ddc97;"></div>
+                        </label>
+                        <label class="metric-checkbox">
+                            <input type="checkbox" id="metric-power" value="power">
+                            <span class="metric-label">Potência (W)</span>
+                            <div class="metric-color" style="background: #ff6b6b;"></div>
+                        </label>
+                    </div>
+                </div>
+                
+                <div class="chart-config-section">
+                    <h4>🎯 GPUs</h4>
+                    <div id="gpu-selector" class="gpu-selector">
+                        <!-- GPUs serão adicionadas dinamicamente -->
+                    </div>
+                </div>
+                
+                <div class="chart-config-section">
+                    <h4>📏 Eixo Y</h4>
+                    <div class="y-axis-controls">
+                        <label class="axis-option">
+                            <input type="radio" name="y-axis-mode" value="auto" checked>
+                            <span>Automático</span>
+                        </label>
+                        <label class="axis-option">
+                            <input type="radio" name="y-axis-mode" value="manual">
+                            <span>Manual</span>
+                        </label>
+                        <div class="manual-axis-inputs" style="display: none;">
+                            <div class="axis-input-group">
+                                <label>Mín:</label>
+                                <input type="number" id="y-axis-min" value="0" step="1">
+                            </div>
+                            <div class="axis-input-group">
+                                <label>Máx:</label>
+                                <input type="number" id="y-axis-max" value="100" step="1">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="chart-config-section">
+                    <h4>💾 Presets</h4>
+                    <div class="preset-controls">
+                        <select id="preset-selector">
+                            <option value="">Selecionar preset...</option>
+                        </select>
+                        <input type="text" id="preset-name" placeholder="Nome do preset" maxlength="50">
+                        <div class="preset-actions">
+                            <button id="save-preset" class="btn btn-small btn-primary">Salvar</button>
+                            <button id="load-preset" class="btn btn-small btn-secondary">Carregar</button>
+                            <button id="delete-preset" class="btn btn-small btn-danger">Deletar</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chart-container-main">
+                <canvas id="main-chart"></canvas>
+            </div>
+        </section>
 
-    <footer class="container footer">
-      <span class="muted">Chart.js timeseries + decimação (LTTB) — uso local, sem servidor.</span>
-    </footer>
+        <!-- Histórico e Estatísticas -->
+        <section class="card">
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="history">📈 Histórico</button>
+                <button class="tab-btn" data-tab="sessions">📹 Sessões</button>
+                <button class="tab-btn" data-tab="stats">📊 Estatísticas</button>
+                <button class="tab-btn" data-tab="logs">📝 Logs</button>
+            </div>
+            
+            <div id="history-tab" class="tab-content active">
+                <div class="history-controls">
+                    <select id="history-period">
+                        <option value="1">Última hora</option>
+                        <option value="6">Últimas 6 horas</option>
+                        <option value="24" selected>Últimas 24 horas</option>
+                        <option value="168">Última semana</option>
+                    </select>
+                    <select id="history-gpu">
+                        <option value="">Todas as GPUs</option>
+                    </select>
+                    <button id="load-history" class="btn btn-primary">Carregar</button>
+                </div>
+                <div id="history-table" class="table-container">
+                    <!-- Tabela será gerada dinamicamente -->
+                </div>
+            </div>
+            
+            <div id="sessions-tab" class="tab-content">
+                <div class="sessions-controls">
+                    <div class="sessions-actions">
+                        <button id="refresh-sessions" class="btn btn-primary">🔄 Atualizar</button>
+                        <select id="sessions-filter">
+                            <option value="all">Todas as Sessões</option>
+                            <option value="active">Apenas Ativas</option>
+                            <option value="completed">Apenas Finalizadas</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="sessions-list" class="sessions-container">
+                    <!-- Lista de sessões será gerada dinamicamente -->
+                </div>
+            </div>
+            
+            <div id="stats-tab" class="tab-content">
+                <div id="stats-content">
+                    <!-- Estatísticas serão geradas dinamicamente -->
+                </div>
+            </div>
+            
+            <div id="logs-tab" class="tab-content">
+                <div class="log-controls">
+                    <button id="clear-logs" class="btn btn-ghost">Limpar Logs</button>
+                    <button id="export-logs" class="btn btn-secondary">Exportar</button>
+                </div>
+                <div id="log-container" class="log-container">
+                    <!-- Logs serão adicionados aqui -->
+                </div>
+            </div>
+        </section>
+    </div>
 
-    <!-- chartjs-plugin-zoom (opcional) -->
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.umd.min.js"></script>
-
-    <script>
-      const fileInput = document.getElementById('fileInput');
-      const columnsPane = document.getElementById('columnsPane');
-      const statusEl = document.getElementById('status');
-      const selectAllBtn = document.getElementById('selectAllBtn');
-      const clearAllBtn = document.getElementById('clearAllBtn');
-      const sampleInput = document.getElementById('sampleInput');
-      const applyPerfBtn = document.getElementById('applyPerfBtn');
-      const zoomToggle = document.getElementById('zoomToggle');
-      const resetZoomBtn = document.getElementById('resetZoomBtn');
-
-      /**
-       * Paleta de cores fixa e legível
-       */
-      const COLOR_PALETTE = [
-        '#e6194b', '#3cb44b', '#ffe119', '#0082c8', '#f58231', '#911eb4', '#46f0f0', '#f032e6',
-        '#d2f53c', '#fabebe', '#008080', '#e6beff', '#aa6e28', '#fffac8', '#800000', '#aaffc3',
-        '#808000', '#ffd8b1', '#000080', '#808080', '#FFFFFF', '#000000'
-      ];
-
-      let chart;
-      let parsedData = { rows: [], columns: [], timestampKey: 'timestamp' };
-
-      function setStatus(msg, kind = 'info') {
-        statusEl.textContent = msg;
-        statusEl.className = 'status ' + kind;
-      }
-
-      function parseCSV(text) {
-        // Simples parse por linha e split em vírgula (CSV do coletor não possui aspas/escapes)
-        const lines = text.split(/\r?\n/).filter(Boolean);
-        if (lines.length < 2) return { rows: [], columns: [], timestampKey: 'timestamp' };
-        const header = lines[0].split(',').map(s => s.trim());
-        const rows = [];
-        for (let i = 1; i < lines.length; i++) {
-          const parts = lines[i].split(',').map(s => s.trim());
-          if (parts.length !== header.length) continue;
-          const row = {};
-          for (let j = 0; j < header.length; j++) {
-            row[header[j]] = parts[j];
-          }
-          rows.push(row);
-        }
-        return { rows, columns: header, timestampKey: 'timestamp' };
-      }
-
-      function isNumericValue(value) {
-        if (value === null || value === undefined) return false;
-        if (value === '' || value.toUpperCase() === 'N/A') return false;
-        return !isNaN(Number(value));
-      }
-
-      function detectNumericColumns(rows, columns, timestampKey) {
-        const candidates = columns.filter(c => c !== timestampKey);
-        const numeric = [];
-        for (const col of candidates) {
-          let ok = false;
-          for (let i = 0; i < rows.length; i++) {
-            const v = rows[i][col];
-            if (isNumericValue(v)) { ok = true; break; }
-          }
-          if (ok) numeric.push(col);
-        }
-        return numeric;
-      }
-
-      function buildCheckboxes(numericColumns) {
-        columnsPane.innerHTML = '';
-        if (numericColumns.length === 0) {
-          columnsPane.innerHTML = '<div class="muted">Nenhuma coluna numérica encontrada.</div>';
-          return;
-        }
-        const frag = document.createDocumentFragment();
-        numericColumns.forEach((col, idx) => {
-          const id = 'col_' + idx;
-          const wrapper = document.createElement('label');
-          wrapper.className = 'checkbox';
-          const input = document.createElement('input');
-          input.type = 'checkbox';
-          input.id = id;
-          input.value = col;
-          // Seleciona por padrão algumas colunas comuns
-          input.checked = ['gpu_util','mem_used_mb','temp_c','power_w','memory_util'].includes(col);
-          input.addEventListener('change', updateChartDatasets);
-          const span = document.createElement('span');
-          span.textContent = col;
-          wrapper.appendChild(input);
-          wrapper.appendChild(span);
-          frag.appendChild(wrapper);
-        });
-        columnsPane.appendChild(frag);
-      }
-
-      function getSelectedColumns() {
-        return Array.from(columnsPane.querySelectorAll('input[type="checkbox"]:checked')).map(i => i.value);
-      }
-
-      function buildDatasets(rows, selectedColumns, timestampKey) {
-        const datasets = [];
-        const colors = COLOR_PALETTE;
-        selectedColumns.forEach((col, idx) => {
-          const data = [];
-          for (let i = 0; i < rows.length; i++) {
-            const ts = rows[i][timestampKey];
-            const y = rows[i][col];
-            if (!isNumericValue(y)) continue;
-            const xVal = new Date(ts).getTime(); // epoch ms
-            if (Number.isFinite(xVal)) {
-              data.push({ x: xVal, y: Number(y) });
-            }
-          }
-          const c = colors[idx % colors.length];
-          datasets.push({
-            label: col,
-            data,
-            borderColor: c,
-            backgroundColor: c,
-            pointRadius: 0,
-            borderWidth: 1.5,
-            tension: 0,
-          });
-        });
-        return datasets;
-      }
-
-      function initChart() {
-        const ctx = document.getElementById('chart').getContext('2d');
-        if (chart) chart.destroy();
-        chart = new Chart(ctx, {
-          type: 'line',
-          data: { datasets: [] },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: { mode: 'nearest', intersect: false },
-            plugins: {
-              legend: { position: 'top' },
-              title: { display: false },
-              decimation: { enabled: true, algorithm: 'lttb', samples: Number(sampleInput.value || 1000) },
-              zoom: {
-                zoom: {
-                  wheel: { enabled: zoomToggle.checked },
-                  pinch: { enabled: zoomToggle.checked },
-                  mode: 'x'
-                },
-                pan: {
-                  enabled: zoomToggle.checked,
-                  mode: 'x'
-                }
-              }
-            },
-            scales: {
-              x: {
-                type: 'timeseries',
-                ticks: { source: 'auto' },
-                time: { unit: 'minute' },
-                adapters: {},
-              },
-              y: {
-                type: 'linear',
-                beginAtZero: true,
-                ticks: { precision: 0 },
-              }
-            }
-          }
-        });
-      }
-
-      function updateChartDatasets() {
-        if (!chart || !parsedData.rows.length) return;
-        const selected = getSelectedColumns();
-        const ds = buildDatasets(parsedData.rows, selected, parsedData.timestampKey);
-        chart.data.datasets = ds;
-        chart.update();
-      }
-
-      function handleFile(file) {
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-          try {
-            setStatus('Carregando CSV…', 'info');
-            const text = String(reader.result || '');
-            parsedData = parseCSV(text);
-            if (!parsedData.rows.length) {
-              setStatus('CSV vazio ou inválido.', 'warn');
-              initChart();
-              buildCheckboxes([]);
-              return;
-            }
-            const numericCols = detectNumericColumns(parsedData.rows, parsedData.columns, parsedData.timestampKey);
-            setStatus(`Linhas: ${parsedData.rows.length} | Colunas: ${parsedData.columns.length} | Numéricas: ${numericCols.length}`, 'ok');
-            initChart();
-            buildCheckboxes(numericCols);
-            updateChartDatasets();
-          } catch (e) {
-            console.error(e);
-            setStatus('Falha ao ler/parsing o CSV.', 'error');
-          }
-        };
-        reader.onerror = () => setStatus('Erro ao ler arquivo.', 'error');
-        reader.readAsText(file);
-      }
-
-      fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
-      selectAllBtn.addEventListener('click', () => {
-        columnsPane.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = true);
-        updateChartDatasets();
-      });
-      clearAllBtn.addEventListener('click', () => {
-        columnsPane.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = false);
-        updateChartDatasets();
-      });
-
-      applyPerfBtn.addEventListener('click', () => {
-        if (!chart) return;
-        chart.options.plugins.decimation.samples = Number(sampleInput.value || 1000);
-        chart.options.plugins.zoom.zoom.wheel.enabled = zoomToggle.checked;
-        chart.options.plugins.zoom.zoom.pinch.enabled = zoomToggle.checked;
-        chart.options.plugins.zoom.pan.enabled = zoomToggle.checked;
-        chart.update();
-      });
-
-      resetZoomBtn.addEventListener('click', () => {
-        if (chart && chart.resetZoom) {
-          chart.resetZoom();
-        }
-      });
-
-      // Boot
-      initChart();
-    </script>
+    <script src="dashboard.js"></script>
   </body>
   </html>
-
-
